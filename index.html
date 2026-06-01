@@ -156,6 +156,31 @@
     font-size: 10px;
   }
 
+  .result-details {
+    display: flex;
+    border-bottom: 1px solid var(--border);
+    background: rgba(0,0,0,0.15);
+  }
+  .detail-box {
+    flex: 1;
+    padding: 14px 20px;
+  }
+  .detail-box:first-child {
+    border-right: 1px solid var(--border);
+  }
+  .detail-label {
+    display: block;
+    font-size: 10px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 4px;
+  }
+  .detail-box strong {
+    font-size: 14px;
+    color: var(--orange);
+  }
+
   .pix-code {
     padding: 20px;
     font-size: 11px;
@@ -163,7 +188,7 @@
     line-height: 1.8;
     color: #9bb0c0;
     letter-spacing: 0.03em;
-    max-height: 120px;
+    max-height: 100px;
     overflow-y: auto;
     scrollbar-width: thin;
     scrollbar-color: var(--border) transparent;
@@ -192,7 +217,36 @@
   .btn-copy:active { transform: scale(0.98); }
   .btn-copy.copied { background: var(--green); }
 
-  .multi-results { margin-top: 12px; font-size: 11px; color: var(--muted); text-align: center; }
+  .btn-copy-all {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    width: 100%;
+    margin-top: 16px;
+    padding: 12px;
+    background: transparent;
+    color: var(--orange);
+    border: 1px dashed var(--orange);
+    font-family: 'DM Mono', monospace;
+    font-size: 12px;
+    font-weight: 500;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .btn-copy-all:hover {
+    background: var(--orange-dim);
+    border-style: solid;
+  }
+  .btn-copy-all.copied {
+    color: var(--green);
+    border-color: var(--green);
+    background: var(--green-dim);
+    border-style: solid;
+  }
+
+  .multi-results { margin-top: 16px; font-size: 11px; color: var(--muted); text-align: center; }
   .multi-nav { display: flex; align-items: center; justify-content: center; gap: 12px; margin-top: 8px; }
   .nav-btn {
     background: var(--surface);
@@ -231,14 +285,14 @@
   <header>
     <div class="badge">Satilog · DACTE</div>
     <h1>Extrator<br><span>PIX Copia e Cola</span></h1>
-    <p class="subtitle">Carregue um PDF de DACTE e o código PIX<br>é extraído automaticamente do QR Code.</p>
+    <p class="subtitle">Extração inteligente de Código PIX, Número do DACTE e Valor a Receber.</p>
   </header>
 
   <div class="dropzone" id="dropzone">
     <input type="file" id="file-input" accept=".pdf" multiple>
     <span class="drop-icon">📄</span>
-    <div class="drop-label"><strong>Clique ou arraste</strong> o PDF do DACTE aqui</div>
-    <div class="drop-hint">Suporta múltiplas páginas · PDF gerado pelo SSW</div>
+    <div class="drop-label"><strong>Clique ou arraste</strong> os PDFs aqui</div>
+    <div class="drop-hint">Suporta múltiplos arquivos e páginas</div>
   </div>
 
   <div class="status" id="status">
@@ -254,14 +308,27 @@
   <div class="result" id="result">
     <div class="result-card">
       <div class="result-header">
-        <span class="result-title">PIX Copia e Cola</span>
-        <span class="result-ok">Encontrado</span>
+        <span class="result-title">Dados Extraídos</span>
+        <span class="result-ok">Detectado</span>
       </div>
+      
+      <div class="result-details">
+        <div class="detail-box">
+          <span class="detail-label">Nº do Documento</span>
+          <strong id="res-num">...</strong>
+        </div>
+        <div class="detail-box">
+          <span class="detail-label">Valor a Receber</span>
+          <strong id="res-val">...</strong>
+        </div>
+      </div>
+
       <div class="pix-code" id="pix-code"></div>
       <button class="btn-copy" id="btn-copy" onclick="copyPix()">
-        <span>⎘</span> Copiar código PIX
+        <span>⎘</span> Copiar este código PIX
       </button>
     </div>
+    
     <div class="multi-results" id="multi-info" style="display:none">
       <span id="multi-text"></span>
       <div class="multi-nav">
@@ -270,6 +337,10 @@
         <button class="nav-btn" id="btn-next" onclick="navPix(1)">Próximo →</button>
       </div>
     </div>
+    
+    <button class="btn-copy-all" id="btn-copy-all" onclick="copyAllPix()">
+      <span>⎘</span> Copiar Mensagem para o Cliente (Todos os PIX)
+    </button>
   </div>
 </div>
 
@@ -280,7 +351,7 @@
 pdfjsLib.GlobalWorkerOptions.workerSrc =
   'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
-let pixCodes = [];
+let dacteData = []; 
 let currentIdx = 0;
 let zxingReader = null;
 
@@ -294,7 +365,6 @@ function getZXing() {
   return zxingReader;
 }
 
-// Drag and drop
 const dz = document.getElementById('dropzone');
 dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('drag'); });
 dz.addEventListener('dragleave', () => dz.classList.remove('drag'));
@@ -311,15 +381,11 @@ document.getElementById('file-input').addEventListener('change', e => {
 function isPIX(code) {
   if (!code) return false;
   const lower = code.toLowerCase();
-  // EMV QR Code PIX: começa com 000201 e tem referência ao BCB
   return code.startsWith('000201') && (
-    lower.includes('br.gov.bcb.pix') ||
-    lower.includes('bcb.pix') ||
-    lower.includes('.pix')
+    lower.includes('br.gov.bcb.pix') || lower.includes('bcb.pix') || lower.includes('.pix')
   );
 }
 
-// Tenta decodificar QR de um canvas usando ZXing
 function tryDecodeCanvas(canvas) {
   try {
     const lum = new ZXing.HTMLCanvasElementLuminanceSource(canvas);
@@ -330,7 +396,6 @@ function tryDecodeCanvas(canvas) {
   }
 }
 
-// Recorta uma região do canvas principal em um canvas temporário
 function cropCanvas(src, x, y, w, h) {
   const tmp = document.createElement('canvas');
   tmp.width = w; tmp.height = h;
@@ -344,21 +409,12 @@ function scanPage(mainCanvas) {
   const H = mainCanvas.height;
   const found = new Set();
 
-  // Regiões a escanear: primeiro tenta regiões onde o QR PIX fica no DACTE SSW
-  // QR PIX fica no canto direito (~83% da largura), em duas posições verticais
-  // (página completa + segunda via em baixo)
   const regions = [
-    // Página inteira
     { x: 0, y: 0, w: W, h: H },
-    // Coluna direita (onde fica o QR PIX no DACTE)
     { x: Math.floor(W * 0.70), y: 0, w: Math.floor(W * 0.30), h: H },
-    // Metade superior direita
     { x: Math.floor(W * 0.70), y: 0, w: Math.floor(W * 0.30), h: Math.floor(H * 0.55) },
-    // Metade inferior direita
     { x: Math.floor(W * 0.70), y: Math.floor(H * 0.45), w: Math.floor(W * 0.30), h: Math.floor(H * 0.55) },
-    // 1/4 superior direito (segunda via fica ~35% Y)
     { x: Math.floor(W * 0.65), y: Math.floor(H * 0.25), w: Math.floor(W * 0.35), h: Math.floor(H * 0.25) },
-    // Faixa vertical direita no meio da página
     { x: Math.floor(W * 0.65), y: Math.floor(H * 0.70), w: Math.floor(W * 0.35), h: Math.floor(H * 0.25) },
   ];
 
@@ -372,14 +428,34 @@ function scanPage(mainCanvas) {
   return [...found];
 }
 
+function formatarValorBR(raw) {
+  let s = raw.replace(/[^\d.,]/g, ''); 
+  const lastComma = s.lastIndexOf(',');
+  const lastDot   = s.lastIndexOf('.');
+
+  let intPart, decPart;
+  if (lastComma > lastDot) {
+    decPart = s.substring(lastComma + 1);
+    intPart = s.substring(0, lastComma).replace(/\./g, '');
+  } else if (lastDot > lastComma) {
+    decPart = s.substring(lastDot + 1);
+    intPart = s.substring(0, lastDot).replace(/,/g, '');
+  } else {
+    return `R$ ${raw}`;
+  }
+
+  decPart = decPart.padEnd(2, '0').substring(0, 2);
+  const formatInt = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  return `R$ ${formatInt},${decPart}`;
+}
+
 async function processFiles(files) {
-  pixCodes = [];
+  dacteData = [];
   currentIdx = 0;
-  setStatus(true, 'Aguardando biblioteca ZXing...');
+  setStatus(true, 'Aguardando processamento...');
   hideResult();
   hideError();
 
-  // Garante que ZXing carregou
   await waitForZXing();
 
   const mainCanvas = document.getElementById('proc-canvas');
@@ -391,22 +467,167 @@ async function processFiles(files) {
     try { pdf = await pdfjsLib.getDocument({ data: ab }).promise; }
     catch(e) { setError('Erro ao abrir o PDF: ' + e.message); return; }
 
+    let fileDocNum = "N/D";
+    let fileDocVal = "N/D";
+
     for (let p = 1; p <= pdf.numPages; p++) {
-      setStatus(true, `Analisando página ${p} de ${pdf.numPages}…`);
+      setStatus(true, `Analisando "${file.name}" — Pág ${p} de ${pdf.numPages}…`);
       const page = await pdf.getPage(p);
 
-      // 2.78x ≈ 200 DPI — escala ideal identificada para este tipo de documento
+      // --- Extração Inteligente de Textos ---
+      if (fileDocNum === "N/D" || fileDocVal === "N/D") {
+        const textContent = await page.getTextContent();
+        
+        // 1. Mapeia posições
+        const items = textContent.items
+          .map(item => ({
+            str: item.str.trim(),
+            x: item.transform[4],
+            y: item.transform[5],
+            width: item.width || 0
+          }))
+          .filter(item => item.str !== '');
+
+        // 2. Constrói linhas virtuais pela posição Y
+        const linhas = [];
+        const TOLERANCIA_Y = 4;
+
+        items.forEach(item => {
+          let linhaEncontrada = linhas.find(l => Math.abs(l.y - item.y) <= TOLERANCIA_Y);
+          if (!linhaEncontrada) {
+            linhaEncontrada = { y: item.y, items: [] };
+            linhas.push(linhaEncontrada);
+          }
+          linhaEncontrada.items.push(item);
+        });
+
+        linhas.sort((a, b) => b.y - a.y);
+        linhas.forEach(l => l.items.sort((a, b) => a.x - b.x));
+
+        // 3. Remenda fragmentos numéricos (corrige o N/D do valor)
+        linhas.forEach(linha => {
+          if (linha.items.length === 0) return;
+          const merged = [linha.items[0]];
+          for (let i = 1; i < linha.items.length; i++) {
+            const atual = linha.items[i];
+            const anterior = merged[merged.length - 1];
+
+            const espaco = atual.x - (anterior.x + anterior.width);
+            const colado = espaco < 5; 
+            const numQuebrado = /^\d+$/.test(anterior.str) && /^[.,]\d{2}$/.test(atual.str);
+
+            if (colado || numQuebrado) {
+              anterior.str += atual.str; 
+              anterior.width += atual.width + (espaco > 0 ? espaco : 0);
+            } else {
+              merged.push(atual);
+            }
+          }
+          linha.items = merged;
+        });
+
+        // 4. EXTRAÇÃO SEGURA DO NÚMERO DO DOCUMENTO
+        // Método 1: Linha única com exatamente 44 números e modelo oficial
+        for (let i = 0; i < linhas.length; i++) {
+          const linhaStr = linhas[i].items.map(t => t.str).join('');
+          const soNumeros = linhaStr.replace(/\D/g, '');
+          
+          if (soNumeros.length === 44) {
+            const mod = soNumeros.substring(20, 22);
+            // 57 = CTe, 55 = NFe, 67 = CTe OS
+            if (mod === "57" || mod === "55" || mod === "67") {
+              fileDocNum = parseInt(soNumeros.substring(25, 34), 10).toString();
+              break;
+            }
+          }
+        }
+
+        // Método 2 (Fallback): Extração geométrica usando a palavra "NÚMERO" no cabeçalho
+        if (fileDocNum === "N/D") {
+          for (let i = 0; i < linhas.length; i++) {
+            const linha = linhas[i];
+            const textoLinha = linha.items.map(t => t.str).join(' ').toUpperCase();
+            
+            if (textoLinha.includes('NUMERO') || textoLinha.includes('NÚMERO')) {
+              const itemAncora = linha.items.find(t => t.str.toUpperCase().includes('NUMERO') || t.str.toUpperCase().includes('NÚMERO'));
+              if (!itemAncora) continue;
+              
+              for (let j = 1; j <= 2; j++) {
+                if (i + j >= linhas.length) break;
+                const linhaBusca = linhas[i + j];
+                for (let k = 0; k < linhaBusca.items.length; k++) {
+                  const item = linhaBusca.items[k];
+                  const difX = Math.abs(item.x - itemAncora.x);
+                  // Verifica se há um número puramente alinhado verticalmente logo abaixo do texto
+                  if (difX < 30 && /^\d+$/.test(item.str.trim())) {
+                    fileDocNum = parseInt(item.str.trim(), 10).toString();
+                    break;
+                  }
+                }
+                if (fileDocNum !== "N/D") break;
+              }
+            }
+            if (fileDocNum !== "N/D") break;
+          }
+        }
+
+        // 5. CAÇA AO VALOR A RECEBER
+        if (fileDocVal === "N/D") {
+          for (let i = 0; i < linhas.length; i++) {
+            const linha = linhas[i];
+            const textoLinha = linha.items.map(t => t.str).join(' ').toUpperCase();
+
+            if (textoLinha.includes('VALOR A RECEBER') || textoLinha.includes('FRETE TOTAL')) {
+              const itemAncora = linha.items.find(t => t.str.toUpperCase().includes('RECEBER') || t.str.toUpperCase().includes('FRETE'));
+              if (!itemAncora) continue;
+              const alvoX = itemAncora.x;
+              let candidatos = [];
+
+              for (let j = 0; j <= 3; j++) {
+                if (i + j >= linhas.length) break;
+                const linhaBusca = linhas[i + j];
+
+                for (let k = 0; k < linhaBusca.items.length; k++) {
+                  const item = linhaBusca.items[k];
+                  const match = item.str.match(/^(?:R\$\s*)?(\d{1,9}(?:[.,]\d{3})*[.,]\d{2})(?!\d|\/|-)/);
+                  
+                  if (match) {
+                    const valorRaw = match[1];
+                    if (valorRaw === '0,00' || valorRaw === '0.00') continue;
+
+                    const difX = item.x - alvoX;
+                    if ((j === 0 && difX > 0) || (j > 0 && difX >= -50 && difX <= 150)) {
+                      candidatos.push({ val: valorRaw, difY: j, absDifX: Math.abs(difX) });
+                    }
+                  }
+                }
+              }
+
+              if (candidatos.length > 0) {
+                candidatos.sort((a, b) => {
+                  if (a.difY !== b.difY) return a.difY - b.difY;
+                  return a.absDifX - b.absDifX;
+                });
+                fileDocVal = formatarValorBR(candidatos[0].val);
+                break; 
+              }
+            }
+          }
+        }
+      }
+
+      // --- Extração do QR Code PIX ---
       const scale = 200 / 72;
       const vp = page.getViewport({ scale });
       mainCanvas.width = vp.width;
       mainCanvas.height = vp.height;
 
       await page.render({ canvasContext: ctx, viewport: vp }).promise;
-
       const codes = scanPage(mainCanvas);
+
       for (const code of codes) {
-        if (isPIX(code) && !pixCodes.includes(code)) {
-          pixCodes.push(code);
+        if (isPIX(code) && !dacteData.some(d => d.pix === code)) {
+          dacteData.push({ pix: code, num: fileDocNum, val: fileDocVal });
         }
       }
     }
@@ -414,10 +635,11 @@ async function processFiles(files) {
 
   setStatus(false);
 
-  if (pixCodes.length === 0) {
-    setError('Nenhum QR Code PIX foi detectado neste documento. Verifique se o PDF contém o campo PIX preenchido e foi gerado pelo SSW.');
+  if (dacteData.length === 0) {
+    setError('Nenhum QR Code PIX detectado no documento.');
   } else {
     showResult(0);
+    document.getElementById('btn-copy-all').style.display = 'flex';
   }
 }
 
@@ -434,29 +656,35 @@ function waitForZXing(timeout = 10000) {
 
 function showResult(idx) {
   currentIdx = idx;
-  document.getElementById('pix-code').textContent = pixCodes[idx];
+  const currentData = dacteData[idx];
+  
+  document.getElementById('res-num').textContent = currentData.num;
+  document.getElementById('res-val').textContent = currentData.val;
+  document.getElementById('pix-code').textContent = currentData.pix;
+  
   document.getElementById('result').classList.add('show');
+  
   const btn = document.getElementById('btn-copy');
-  btn.innerHTML = '<span>⎘</span> Copiar código PIX';
+  btn.innerHTML = '<span>⎘</span> Copiar este código PIX';
   btn.classList.remove('copied');
 
-  if (pixCodes.length > 1) {
+  if (dacteData.length > 1) {
     const mi = document.getElementById('multi-info');
     mi.style.display = 'block';
-    document.getElementById('multi-text').textContent = `${pixCodes.length} códigos PIX encontrados`;
-    document.getElementById('pix-counter').textContent = `${idx + 1} / ${pixCodes.length}`;
+    document.getElementById('multi-text').textContent = `${dacteData.length} DACTEs encontrados no total`;
+    document.getElementById('pix-counter').textContent = `${idx + 1} / ${dacteData.length}`;
     document.getElementById('btn-prev').disabled = idx === 0;
-    document.getElementById('btn-next').disabled = idx === pixCodes.length - 1;
+    document.getElementById('btn-next').disabled = idx === dacteData.length - 1;
   }
 }
 
 function navPix(dir) {
   const next = currentIdx + dir;
-  if (next >= 0 && next < pixCodes.length) showResult(next);
+  if (next >= 0 && next < dacteData.length) showResult(next);
 }
 
 async function copyPix() {
-  const code = pixCodes[currentIdx];
+  const code = dacteData[currentIdx].pix;
   try {
     await navigator.clipboard.writeText(code);
   } catch(e) {
@@ -471,9 +699,43 @@ async function copyPix() {
   btn.innerHTML = '<span>✓</span> Copiado!';
   btn.classList.add('copied');
   setTimeout(() => {
-    btn.innerHTML = '<span>⎘</span> Copiar código PIX';
+    btn.innerHTML = '<span>⎘</span> Copiar este código PIX';
     btn.classList.remove('copied');
   }, 2500);
+}
+
+async function copyAllPix() {
+  if (dacteData.length === 0) return;
+
+  let mensagem = "Olá! Seguem os dados para pagamento:\n\n";
+  
+  dacteData.forEach((item) => {
+    mensagem += `📄 *Documento DACTE:* ${item.num}\n`;
+    mensagem += `💰 *Valor:* ${item.val}\n`;
+    mensagem += `🔑 *PIX Copia e Cola:*\n${item.pix}\n\n`;
+    mensagem += `-----------------------\n\n`;
+  });
+
+  mensagem += "Ficamos à disposição!";
+
+  try {
+    await navigator.clipboard.writeText(mensagem.trim());
+  } catch(e) {
+    const ta = document.createElement('textarea');
+    ta.value = mensagem.trim();
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    ta.remove();
+  }
+
+  const btnAll = document.getElementById('btn-copy-all');
+  btnAll.innerHTML = '<span>✓</span> Mensagem Copiada!';
+  btnAll.classList.add('copied');
+  setTimeout(() => {
+    btnAll.innerHTML = '<span>⎘</span> Copiar Mensagem para o Cliente (Todos os PIX)';
+    btnAll.classList.remove('copied');
+  }, 3000);
 }
 
 function setStatus(show, text = '') {
@@ -481,7 +743,11 @@ function setStatus(show, text = '') {
   s.classList.toggle('show', show);
   document.getElementById('status-text').textContent = text;
 }
-function hideResult() { document.getElementById('result').classList.remove('show'); document.getElementById('multi-info').style.display = 'none'; }
+function hideResult() { 
+  document.getElementById('result').classList.remove('show'); 
+  document.getElementById('multi-info').style.display = 'none'; 
+  document.getElementById('btn-copy-all').style.display = 'none'; 
+}
 function hideError() { document.getElementById('error-card').classList.remove('show'); }
 function setError(msg) {
   setStatus(false);
