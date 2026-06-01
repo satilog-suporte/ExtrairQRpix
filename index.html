@@ -504,7 +504,7 @@ async function processFiles(files) {
         linhas.sort((a, b) => b.y - a.y);
         linhas.forEach(l => l.items.sort((a, b) => a.x - b.x));
 
-        // 3. Remenda fragmentos numéricos (corrige o N/D do valor)
+        // 3. Remenda fragmentos numéricos
         linhas.forEach(linha => {
           if (linha.items.length === 0) return;
           const merged = [linha.items[0]];
@@ -527,14 +527,12 @@ async function processFiles(files) {
         });
 
         // 4. EXTRAÇÃO SEGURA DO NÚMERO DO DOCUMENTO
-        // Método 1: Linha única com exatamente 44 números e modelo oficial
         for (let i = 0; i < linhas.length; i++) {
           const linhaStr = linhas[i].items.map(t => t.str).join('');
           const soNumeros = linhaStr.replace(/\D/g, '');
           
           if (soNumeros.length === 44) {
             const mod = soNumeros.substring(20, 22);
-            // 57 = CTe, 55 = NFe, 67 = CTe OS
             if (mod === "57" || mod === "55" || mod === "67") {
               fileDocNum = parseInt(soNumeros.substring(25, 34), 10).toString();
               break;
@@ -542,7 +540,6 @@ async function processFiles(files) {
           }
         }
 
-        // Método 2 (Fallback): Extração geométrica usando a palavra "NÚMERO" no cabeçalho
         if (fileDocNum === "N/D") {
           for (let i = 0; i < linhas.length; i++) {
             const linha = linhas[i];
@@ -558,7 +555,6 @@ async function processFiles(files) {
                 for (let k = 0; k < linhaBusca.items.length; k++) {
                   const item = linhaBusca.items[k];
                   const difX = Math.abs(item.x - itemAncora.x);
-                  // Verifica se há um número puramente alinhado verticalmente logo abaixo do texto
                   if (difX < 30 && /^\d+$/.test(item.str.trim())) {
                     fileDocNum = parseInt(item.str.trim(), 10).toString();
                     break;
@@ -712,9 +708,9 @@ async function copyAllPix() {
   dacteData.forEach((item) => {
     mensagem += `📄 *Documento DACTE:* ${item.num}\n`;
     mensagem += `💰 *Valor:* ${item.val}\n`;
-    // Adicionamos as três crases (```) antes e depois do PIX
-    mensagem += `🔑 *PIX Copia e Cola:*\n\`\`\`${item.pix}\`\`\`\n\n`;
-    mensagem += `-----------------------\n\n`;
+    // Adicionamos aspas isoladas para evitar conflitos na montagem da string
+    mensagem += "🔑 *PIX Copia e Cola:*\n```" + item.pix + "```\n\n";
+    mensagem += "-----------------------\n\n";
   });
 
   mensagem += "Ficamos à disposição!";
