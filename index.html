@@ -712,7 +712,8 @@ async function copyAllPix() {
   dacteData.forEach((item) => {
     mensagem += `📄 *Documento DACTE:* ${item.num}\n`;
     mensagem += `💰 *Valor:* ${item.val}\n`;
-    mensagem += `🔑 *PIX Copia e Cola:*\n${item.pix}\n\n`;
+    // Adicionamos as três crases (```) antes e depois do PIX
+    mensagem += `🔑 *PIX Copia e Cola:*\n\`\`\`${item.pix}\`\`\`\n\n`;
     mensagem += `-----------------------\n\n`;
   });
 
