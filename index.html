@@ -478,7 +478,6 @@ async function processFiles(files) {
       if (fileDocNum === "N/D" || fileDocVal === "N/D") {
         const textContent = await page.getTextContent();
         
-        // 1. Mapeia posições
         const items = textContent.items
           .map(item => ({
             str: item.str.trim(),
@@ -488,7 +487,6 @@ async function processFiles(files) {
           }))
           .filter(item => item.str !== '');
 
-        // 2. Constrói linhas virtuais pela posição Y
         const linhas = [];
         const TOLERANCIA_Y = 4;
 
@@ -504,7 +502,6 @@ async function processFiles(files) {
         linhas.sort((a, b) => b.y - a.y);
         linhas.forEach(l => l.items.sort((a, b) => a.x - b.x));
 
-        // 3. Remenda fragmentos numéricos
         linhas.forEach(linha => {
           if (linha.items.length === 0) return;
           const merged = [linha.items[0]];
@@ -526,7 +523,6 @@ async function processFiles(files) {
           linha.items = merged;
         });
 
-        // 4. EXTRAÇÃO SEGURA DO NÚMERO DO DOCUMENTO
         for (let i = 0; i < linhas.length; i++) {
           const linhaStr = linhas[i].items.map(t => t.str).join('');
           const soNumeros = linhaStr.replace(/\D/g, '');
@@ -567,7 +563,6 @@ async function processFiles(files) {
           }
         }
 
-        // 5. CAÇA AO VALOR A RECEBER
         if (fileDocVal === "N/D") {
           for (let i = 0; i < linhas.length; i++) {
             const linha = linhas[i];
@@ -708,9 +703,9 @@ async function copyAllPix() {
   dacteData.forEach((item) => {
     mensagem += `📄 *Documento DACTE:* ${item.num}\n`;
     mensagem += `💰 *Valor:* ${item.val}\n`;
-    // Adicionamos aspas isoladas para evitar conflitos na montagem da string
-    mensagem += "🔑 *PIX Copia e Cola:*\n```" + item.pix + "```\n\n";
-    mensagem += "-----------------------\n\n";
+    mensagem += `👇 *Copie o código PIX abaixo:*\n\n`;
+    mensagem += `${item.pix}\n\n`;
+    mensagem += `— — — — — — — — — — —\n\n`;
   });
 
   mensagem += "Ficamos à disposição!";
