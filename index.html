@@ -6,6 +6,7 @@
 <title>Extrator PIX — DACTE</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="https://unpkg.com/@zxing/library@0.19.1/umd/index.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@700;800&display=swap');
 
@@ -351,7 +352,7 @@
 pdfjsLib.GlobalWorkerOptions.workerSrc =
   'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
-let dacteData = []; 
+let dacteData = [];
 let currentIdx = 0;
 let zxingReader = null;
 
@@ -386,14 +387,36 @@ function isPIX(code) {
   );
 }
 
+// ─── CORREÇÃO 1: tryDecodeCanvas com triplo fallback ─────────────────────────
+// O ZXing-JS não consegue decodificar certos QR codes válidos (ex: ctrc10542612).
+// A solução é tentar três decoders em sequência:
+//   1. ZXing HybridBinarizer     (mais preciso, funciona na maioria dos casos)
+//   2. ZXing GlobalHistogramBinarizer  (fallback mais tolerante)
+//   3. jsQR                      (biblioteca alternativa, decodifica o que ZXing não consegue)
 function tryDecodeCanvas(canvas) {
+  // Tentativa 1: ZXing HybridBinarizer
   try {
     const lum = new ZXing.HTMLCanvasElementLuminanceSource(canvas);
     const bitmap = new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(lum));
     return zxingReader.decode(bitmap).getText();
-  } catch(e) {
-    return null;
-  }
+  } catch(e) {}
+
+  // Tentativa 2: ZXing GlobalHistogramBinarizer
+  try {
+    const lum = new ZXing.HTMLCanvasElementLuminanceSource(canvas);
+    const bitmap = new ZXing.BinaryBitmap(new ZXing.GlobalHistogramBinarizer(lum));
+    return zxingReader.decode(bitmap).getText();
+  } catch(e) {}
+
+  // Tentativa 3: jsQR como fallback final
+  try {
+    const ctx = canvas.getContext('2d');
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const result = jsQR(imageData.data, canvas.width, canvas.height);
+    if (result) return result.data;
+  } catch(e) {}
+
+  return null;
 }
 
 function cropCanvas(src, x, y, w, h) {
@@ -429,7 +452,7 @@ function scanPage(mainCanvas) {
 }
 
 function formatarValorBR(raw) {
-  let s = raw.replace(/[^\d.,]/g, ''); 
+  let s = raw.replace(/[^\d.,]/g, '');
   const lastComma = s.lastIndexOf(',');
   const lastDot   = s.lastIndexOf('.');
 
@@ -477,7 +500,7 @@ async function processFiles(files) {
       // --- Extração Inteligente de Textos ---
       if (fileDocNum === "N/D" || fileDocVal === "N/D") {
         const textContent = await page.getTextContent();
-        
+
         const items = textContent.items
           .map(item => ({
             str: item.str.trim(),
@@ -510,11 +533,11 @@ async function processFiles(files) {
             const anterior = merged[merged.length - 1];
 
             const espaco = atual.x - (anterior.x + anterior.width);
-            const colado = espaco < 5; 
+            const colado = espaco < 5;
             const numQuebrado = /^\d+$/.test(anterior.str) && /^[.,]\d{2}$/.test(atual.str);
 
             if (colado || numQuebrado) {
-              anterior.str += atual.str; 
+              anterior.str += atual.str;
               anterior.width += atual.width + (espaco > 0 ? espaco : 0);
             } else {
               merged.push(atual);
@@ -523,10 +546,11 @@ async function processFiles(files) {
           linha.items = merged;
         });
 
+        // Extração do número do documento
         for (let i = 0; i < linhas.length; i++) {
           const linhaStr = linhas[i].items.map(t => t.str).join('');
           const soNumeros = linhaStr.replace(/\D/g, '');
-          
+
           if (soNumeros.length === 44) {
             const mod = soNumeros.substring(20, 22);
             if (mod === "57" || mod === "55" || mod === "67") {
@@ -540,11 +564,11 @@ async function processFiles(files) {
           for (let i = 0; i < linhas.length; i++) {
             const linha = linhas[i];
             const textoLinha = linha.items.map(t => t.str).join(' ').toUpperCase();
-            
+
             if (textoLinha.includes('NUMERO') || textoLinha.includes('NÚMERO')) {
               const itemAncora = linha.items.find(t => t.str.toUpperCase().includes('NUMERO') || t.str.toUpperCase().includes('NÚMERO'));
               if (!itemAncora) continue;
-              
+
               for (let j = 1; j <= 2; j++) {
                 if (i + j >= linhas.length) break;
                 const linhaBusca = linhas[i + j];
@@ -563,47 +587,63 @@ async function processFiles(files) {
           }
         }
 
-        if (fileDocVal === "N/D") {
+        // ─── CORREÇÃO 2: extração de valor com prioridade e suporte a valor embutido ─
+        // Problema original: quando o PDF mescla "FRETE TOTAL (R$)800,00" num único token,
+        // o regex de início-de-string falhava e capturava um valor errado da linha seguinte.
+        // Solução: verificar se o valor já está embutido no próprio token âncora (busca no sufixo),
+        // e priorizar "VALOR A RECEBER" sobre "FRETE TOTAL".
+        const VAL_REGEX_INICIO = /^(?:R\$\s*)?(\d{1,9}(?:[.,]\d{3})*[.,]\d{2})(?!\d|\/|-)/;
+        const VAL_REGEX_SUFIXO = /[\)\s](\d{1,9}(?:[.,]\d{3})*[.,]\d{2})(?!\d|\/|-)[\s]*$/;
+
+        function tentarExtrairValor(keyword) {
           for (let i = 0; i < linhas.length; i++) {
             const linha = linhas[i];
             const textoLinha = linha.items.map(t => t.str).join(' ').toUpperCase();
+            if (!textoLinha.includes(keyword)) continue;
 
-            if (textoLinha.includes('VALOR A RECEBER') || textoLinha.includes('FRETE TOTAL')) {
-              const itemAncora = linha.items.find(t => t.str.toUpperCase().includes('RECEBER') || t.str.toUpperCase().includes('FRETE'));
-              if (!itemAncora) continue;
-              const alvoX = itemAncora.x;
-              let candidatos = [];
+            const itemAncora = linha.items.find(t => t.str.toUpperCase().includes(keyword));
+            if (!itemAncora) continue;
+            const alvoX = itemAncora.x;
 
-              for (let j = 0; j <= 3; j++) {
-                if (i + j >= linhas.length) break;
-                const linhaBusca = linhas[i + j];
+            // Verifica se o valor está embutido no token âncora (ex: "FRETE TOTAL (R$)800,00")
+            const embutido = VAL_REGEX_SUFIXO.exec(itemAncora.str);
+            if (embutido) {
+              const val = embutido[1];
+              if (val !== '0,00' && val !== '0.00') return formatarValorBR(val);
+            }
 
-                for (let k = 0; k < linhaBusca.items.length; k++) {
-                  const item = linhaBusca.items[k];
-                  const match = item.str.match(/^(?:R\$\s*)?(\d{1,9}(?:[.,]\d{3})*[.,]\d{2})(?!\d|\/|-)/);
-                  
-                  if (match) {
-                    const valorRaw = match[1];
-                    if (valorRaw === '0,00' || valorRaw === '0.00') continue;
+            // Busca em itens separados nas próximas linhas
+            let candidatos = [];
+            for (let j = 0; j <= 3; j++) {
+              if (i + j >= linhas.length) break;
+              const linhaBusca = linhas[i + j];
 
-                    const difX = item.x - alvoX;
-                    if ((j === 0 && difX > 0) || (j > 0 && difX >= -50 && difX <= 150)) {
-                      candidatos.push({ val: valorRaw, difY: j, absDifX: Math.abs(difX) });
-                    }
+              for (let k = 0; k < linhaBusca.items.length; k++) {
+                const item = linhaBusca.items[k];
+                const match = VAL_REGEX_INICIO.exec(item.str);
+                if (match) {
+                  const valorRaw = match[1];
+                  if (valorRaw === '0,00' || valorRaw === '0.00') continue;
+
+                  const difX = item.x - alvoX;
+                  if ((j === 0 && difX > 0) || (j > 0 && difX >= -50 && difX <= 150)) {
+                    candidatos.push({ val: valorRaw, difY: j, absDifX: Math.abs(difX) });
                   }
                 }
               }
+            }
 
-              if (candidatos.length > 0) {
-                candidatos.sort((a, b) => {
-                  if (a.difY !== b.difY) return a.difY - b.difY;
-                  return a.absDifX - b.absDifX;
-                });
-                fileDocVal = formatarValorBR(candidatos[0].val);
-                break; 
-              }
+            if (candidatos.length > 0) {
+              candidatos.sort((a, b) => a.difY !== b.difY ? a.difY - b.difY : a.absDifX - b.absDifX);
+              return formatarValorBR(candidatos[0].val);
             }
           }
+          return null;
+        }
+
+        if (fileDocVal === "N/D") {
+          // Prioridade: VALOR A RECEBER > FRETE TOTAL
+          fileDocVal = tentarExtrairValor('VALOR A RECEBER') || tentarExtrairValor('FRETE TOTAL') || "N/D";
         }
       }
 
@@ -648,13 +688,13 @@ function waitForZXing(timeout = 10000) {
 function showResult(idx) {
   currentIdx = idx;
   const currentData = dacteData[idx];
-  
+
   document.getElementById('res-num').textContent = currentData.num;
   document.getElementById('res-val').textContent = currentData.val;
   document.getElementById('pix-code').textContent = currentData.pix;
-  
+
   document.getElementById('result').classList.add('show');
-  
+
   const btn = document.getElementById('btn-copy');
   btn.innerHTML = '<span>⎘</span> Copiar este código PIX';
   btn.classList.remove('copied');
@@ -699,7 +739,7 @@ async function copyAllPix() {
   if (dacteData.length === 0) return;
 
   let mensagem = "Olá! Seguem os dados para pagamento:\n\n";
-  
+
   dacteData.forEach((item) => {
     mensagem += `📄 *Documento DACTE:* ${item.num}\n`;
     mensagem += `💰 *Valor:* ${item.val}\n`;
@@ -735,10 +775,10 @@ function setStatus(show, text = '') {
   s.classList.toggle('show', show);
   document.getElementById('status-text').textContent = text;
 }
-function hideResult() { 
-  document.getElementById('result').classList.remove('show'); 
-  document.getElementById('multi-info').style.display = 'none'; 
-  document.getElementById('btn-copy-all').style.display = 'none'; 
+function hideResult() {
+  document.getElementById('result').classList.remove('show');
+  document.getElementById('multi-info').style.display = 'none';
+  document.getElementById('btn-copy-all').style.display = 'none';
 }
 function hideError() { document.getElementById('error-card').classList.remove('show'); }
 function setError(msg) {
